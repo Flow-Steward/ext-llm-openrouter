@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "result": {
+    "message": {
+      "role": "assistant",
+      "content": "Hello from deepseek/deepseek-chat via OpenRouter."
+    },
+    "finish_reason": "stop",
+    "usage": {
+      "input_tokens": 12,
+      "output_tokens": 9,
+      "total_tokens": 21
+    }
+  }
+}

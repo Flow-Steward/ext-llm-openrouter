@@ -1,0 +1,1 @@
+"""OpenRouter reference extension bundle."""

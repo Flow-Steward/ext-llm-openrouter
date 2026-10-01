@@ -1,0 +1,36 @@
+{
+  "ok": true,
+  "result": {
+    "models": [
+      {
+        "model_id": "deepseek/deepseek-chat",
+        "label": "DeepSeek Chat",
+        "upstream_owner_key": "deepseek",
+        "upstream_owner_label": "DeepSeek",
+        "capabilities": ["chat", "structured_output"],
+        "supports_structured_output": true,
+        "metadata": { "context_length": 64000 }
+      },
+      {
+        "model_id": "z-ai/glm-4.5",
+        "label": "GLM 4.5",
+        "upstream_owner_key": "z-ai",
+        "upstream_owner_label": "Z.AI / GLM",
+        "capabilities": ["chat", "structured_output"],
+        "supports_structured_output": true,
+        "metadata": {}
+      },
+      {
+        "model_id": "meta-llama/llama-3.3-70b-instruct",
+        "label": "Llama 3.3 70B Instruct",
+        "upstream_owner_key": "meta-llama",
+        "upstream_owner_label": "Meta Llama",
+        "capabilities": ["chat"],
+        "supports_structured_output": false,
+        "metadata": {}
+      }
+    ],
+    "next_cursor": "",
+    "snapshot_complete": true
+  }
+}
