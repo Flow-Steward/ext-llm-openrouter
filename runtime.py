@@ -1,8 +1,8 @@
-"""Runnable remote HTTPS runtime for the OpenRouter reference bundle.
+"""OpenRouter provider operations for the Flow Steward llm_provider contract.
 
-Run with ``FS_EXTENSION_TOKEN=... FS_EXTENSION_PORT=8090 python3 runtime.py``.
-OpenRouter's upstream is fixed; the platform supplies only account-scoped
-credentials per invocation and this runtime never persists them.
+The extension runs as an ordinary Flow Steward extension subprocess (see
+``main.py``). OpenRouter's upstream is fixed; the host supplies only the
+account-scoped ``api_key`` per invocation and nothing here persists it.
 """
 
 from __future__ import annotations
@@ -12,16 +12,10 @@ import http.client
 import ipaddress
 import json
 import math
-import os
 import re
-import secrets
 import socket
 import ssl
-import threading
-import time
-from collections.abc import Callable
 from contextlib import suppress
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
@@ -29,90 +23,24 @@ from urllib.request import Request
 
 MAX_RUNTIME_BODY_BYTES = 5 * 1024 * 1024
 MAX_DISCOVERY_PAGE_SIZE = 200
-MAX_DISCOVERY_SNAPSHOTS = 4
-DISCOVERY_SNAPSHOT_TTL_SECONDS = 90
-MAX_ACTION_IDEMPOTENCY_ENTRIES = 256
-ACTION_IDEMPOTENCY_TTL_SECONDS = 300
-ACTION_IDEMPOTENCY_WAIT_SECONDS = 65
-_discovery_snapshots: dict[str, tuple[float, list[Any]]] = {}
-_discovery_snapshots_lock = threading.Lock()
-_action_idempotency: dict[str, dict[str, Any]] = {}
-_action_idempotency_lock = threading.Lock()
-
-
-def _execute_idempotent_action(
-    request: dict[str, Any],
-    action_id: str,
-    operation: Callable[[], dict[str, Any]],
-) -> dict[str, Any]:
-    key = str(request.get("idempotency_key") or "").strip()
-    if not key or len(key) > 512:
-        raise RuntimeError("invalid_response")
-    cache_key = hashlib.sha256(key.encode()).hexdigest()
-    try:
-        canonical = json.dumps(
-            {"action": action_id, "request": request},
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode()
-    except (TypeError, ValueError) as exc:
-        raise RuntimeError("invalid_response") from exc
-    fingerprint = hashlib.sha256(canonical).hexdigest()
-    now = time.monotonic()
-    with _action_idempotency_lock:
-        for expired_key in [
-            candidate
-            for candidate, entry in _action_idempotency.items()
-            if entry["deadline"] <= now and entry["event"].is_set()
-        ]:
-            _action_idempotency.pop(expired_key, None)
-        entry = _action_idempotency.get(cache_key)
-        if entry is not None:
-            if entry["fingerprint"] != fingerprint:
-                raise RuntimeError("invalid_response")
-            owner = False
-        else:
-            if len(_action_idempotency) >= MAX_ACTION_IDEMPOTENCY_ENTRIES:
-                raise RuntimeError("rate_limited")
-            entry = {
-                "deadline": now + ACTION_IDEMPOTENCY_TTL_SECONDS,
-                "event": threading.Event(),
-                "fingerprint": fingerprint,
-                "result": None,
-                "error": "",
-            }
-            _action_idempotency[cache_key] = entry
-            owner = True
-    if owner:
-        try:
-            entry["result"] = operation()
-        except Exception as exc:
-            entry["error"] = str(exc).split(":", 1)[0] or "upstream_error"
-        finally:
-            entry["event"].set()
-    elif not entry["event"].wait(timeout=ACTION_IDEMPOTENCY_WAIT_SECONDS):
-        raise RuntimeError("timeout")
-    if entry["error"]:
-        raise RuntimeError(entry["error"])
-    result = entry["result"]
-    if not isinstance(result, dict):
-        raise RuntimeError("invalid_response")
-    return result
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+SAFE_ERROR_CODES = frozenset(
+    {
+        "authentication_error",
+        "billing_quota_exceeded",
+        "capability_mismatch",
+        "invalid_response",
+        "model_unavailable",
+        "rate_limited",
+        "timeout",
+        "upstream_error",
+    }
+)
 
 
 def _read_bounded(stream: Any) -> bytes:
     raw = stream.read(MAX_RUNTIME_BODY_BYTES + 1)
     if len(raw) > MAX_RUNTIME_BODY_BYTES:
-        raise RuntimeError("invalid_response")
-    return raw
-
-
-def _read_request_body(stream: Any, content_length: int) -> bytes:
-    if content_length < 0 or content_length > MAX_RUNTIME_BODY_BYTES:
-        raise RuntimeError("invalid_response")
-    raw = stream.read(content_length)
-    if len(raw) != content_length:
         raise RuntimeError("invalid_response")
     return raw
 
@@ -273,6 +201,8 @@ def _request_json(
 def _failure_response(code: str, *, request_semantics: str) -> dict[str, Any]:
     """Expose only provider-neutral retry facts to the host orchestrator."""
     safe_code = str(code).split(":", 1)[0]
+    if safe_code not in SAFE_ERROR_CODES:
+        safe_code = "upstream_error"
     retryable_code = safe_code in {"rate_limited", "timeout", "upstream_error"}
     definite_refusal = safe_code in {
         "authentication_error",
@@ -281,9 +211,12 @@ def _failure_response(code: str, *, request_semantics: str) -> dict[str, Any]:
         "rate_limited",
     }
     definitely_no_effect = request_semantics == "safe_read" or definite_refusal
+    message = f"OpenRouter request failed: {safe_code}"
     return {
         "ok": False,
-        "errors": [{"code": safe_code}],
+        "error_code": safe_code,
+        "error": message,
+        "errors": [{"code": safe_code, "message": message}],
         "failure_class": "transient" if safe_code in {"timeout", "upstream_error"} else "provider",
         "retryable": retryable_code and definitely_no_effect,
         "definitely_no_external_effect": definitely_no_effect,
@@ -295,7 +228,7 @@ def _failure_response(code: str, *, request_semantics: str) -> dict[str, Any]:
 def _connection(request: dict[str, Any]) -> tuple[str, dict[str, str]]:
     connection = request.get("connection") if isinstance(request, dict) else {}
     credentials = connection.get("credentials") if isinstance(connection, dict) else {}
-    base_url = "https://openrouter.ai/api/v1"
+    base_url = OPENROUTER_BASE_URL
     api_key = str((credentials or {}).get("api_key") or "").strip()
     if not api_key:
         raise RuntimeError("authentication_error")
@@ -306,11 +239,11 @@ def _pagination(request: dict[str, Any]) -> tuple[str, int, int]:
     query = request.get("query") if isinstance(request, dict) else {}
     query = query if isinstance(query, dict) else {}
     cursor = str(query.get("cursor") or "").strip()
-    token = ""
+    fingerprint = ""
     offset = 0
     if cursor:
-        token, separator, raw_offset = cursor.partition(":")
-        if not separator or not token or not raw_offset.isdigit():
+        fingerprint, separator, raw_offset = cursor.partition(":")
+        if not separator or not fingerprint or not raw_offset.isdigit():
             raise RuntimeError("invalid_response")
         offset = int(raw_offset)
     try:
@@ -319,35 +252,18 @@ def _pagination(request: dict[str, Any]) -> tuple[str, int, int]:
         raise RuntimeError("invalid_response") from exc
     if offset < 0 or requested_limit < 1:
         raise RuntimeError("invalid_response")
-    return token, offset, min(requested_limit, MAX_DISCOVERY_PAGE_SIZE)
+    return fingerprint, offset, min(requested_limit, MAX_DISCOVERY_PAGE_SIZE)
 
 
-def _new_discovery_snapshot(data: list[Any]) -> str:
-    now = time.monotonic()
-    token = secrets.token_urlsafe(24)
-    with _discovery_snapshots_lock:
-        expired = [key for key, (deadline, _) in _discovery_snapshots.items() if deadline <= now]
-        for key in expired:
-            _discovery_snapshots.pop(key, None)
-        if len(_discovery_snapshots) >= MAX_DISCOVERY_SNAPSHOTS:
-            raise RuntimeError("rate_limited")
-        _discovery_snapshots[token] = (now + DISCOVERY_SNAPSHOT_TTL_SECONDS, list(data))
-    return token
-
-
-def _read_discovery_snapshot(token: str) -> list[Any]:
-    now = time.monotonic()
-    with _discovery_snapshots_lock:
-        entry = _discovery_snapshots.get(token)
-        if entry is None or entry[0] <= now:
-            _discovery_snapshots.pop(token, None)
-            raise RuntimeError("invalid_response")
-        return entry[1]
-
-
-def _drop_discovery_snapshot(token: str) -> None:
-    with _discovery_snapshots_lock:
-        _discovery_snapshots.pop(token, None)
+def _catalog_fingerprint(data: list[Any]) -> str:
+    """Identify one catalog listing so every page of a discovery reads the same list."""
+    identity = [
+        [str(item.get("id") or ""), str(item.get("canonical_slug") or "")]
+        for item in data
+        if isinstance(item, dict)
+    ]
+    raw = json.dumps(identity, separators=(",", ":")).encode()
+    return hashlib.sha256(raw).hexdigest()[:32]
 
 
 def _json_content(value: Any) -> Any:
@@ -449,13 +365,15 @@ def _owner_label(item: dict[str, Any], owner_key: str) -> str:
 
 def list_models(request: dict[str, Any]) -> dict[str, Any]:
     base_url, headers = _connection(request)
-    token, offset, limit = _pagination(request)
-    if token:
-        data = _read_discovery_snapshot(token)
-    else:
-        data = _request_json(f"{base_url}/models", method="GET", headers=headers).get("data", [])
-        if not isinstance(data, list):
-            raise RuntimeError("invalid_response")
+    expected_fingerprint, offset, limit = _pagination(request)
+    data = _request_json(f"{base_url}/models", method="GET", headers=headers).get("data", [])
+    if not isinstance(data, list):
+        raise RuntimeError("invalid_response")
+    fingerprint = _catalog_fingerprint(data)
+    if expected_fingerprint and expected_fingerprint != fingerprint:
+        # The catalog changed between pages: the host keeps its last complete
+        # catalog rather than reconciling a mixed snapshot.
+        raise RuntimeError("invalid_response")
     models = []
     page_data = data[offset : offset + limit]
     for item in page_data:
@@ -486,13 +404,7 @@ def list_models(request: dict[str, Any]) -> dict[str, Any]:
             }
         )
     next_offset = offset + len(page_data)
-    if next_offset < len(data):
-        token = token or _new_discovery_snapshot(data)
-        next_cursor = f"{token}:{next_offset}"
-    else:
-        if token:
-            _drop_discovery_snapshot(token)
-        next_cursor = ""
+    next_cursor = f"{fingerprint}:{next_offset}" if next_offset < len(data) else ""
     return {"models": models, "next_cursor": next_cursor, "snapshot_complete": True}
 
 
@@ -571,75 +483,3 @@ def chat(request: dict[str, Any], *, structured: bool = False) -> dict[str, Any]
     if structured:
         result["structured_output"] = (message or {}).get("content")
     return result
-
-
-class Handler(BaseHTTPRequestHandler):
-    token = os.environ.get("FS_EXTENSION_TOKEN", "")
-
-    def _send(self, status: int, payload: dict[str, Any]) -> None:
-        raw = json.dumps(payload).encode()
-        if len(raw) > MAX_RUNTIME_BODY_BYTES:
-            status = 502
-            raw = b'{"ok":false,"errors":[{"code":"invalid_response"}]}'
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(raw)))
-        self.end_headers()
-        self.wfile.write(raw)
-
-    def do_GET(self) -> None:
-        self._send(
-            200,
-            {"ok": True, "status": "ready", "extension_id": "flowsteward.openrouter"}
-            if self.path == "/health"
-            else {"ok": False},
-        )
-
-    def do_POST(self) -> None:
-        if not self.token:
-            self._send(503, {"ok": False, "errors": [{"code": "runtime_auth_not_configured"}]})
-            return
-        if self.headers.get("Authorization") != f"Bearer {self.token}":
-            self._send(401, {"ok": False, "errors": [{"code": "unauthorized"}]})
-            return
-        try:
-            content_length = int(self.headers.get("Content-Length", "0"))
-            body = json.loads(_read_request_body(self.rfile, content_length).decode() or "{}")
-            if self.path == "/handshake":
-                result = {
-                    "extension_id": "flowsteward.openrouter",
-                    "contract_version": "extension_host_v1",
-                }
-            elif self.path == "/queries/llm.list_models":
-                result = list_models(body)
-            elif self.path == "/actions/llm.chat":
-                result = _execute_idempotent_action(body, "llm.chat", lambda: chat(body))
-            elif self.path == "/actions/llm.chat_structured":
-                result = _execute_idempotent_action(
-                    body, "llm.chat_structured", lambda: chat(body, structured=True)
-                )
-            elif self.path == "/events":
-                result = {"accepted": True}
-            else:
-                self._send(404, {"ok": False, "errors": [{"code": "not_found"}]})
-                return
-            self._send(200, {"ok": True, "result": result, "errors": []})
-        except Exception as exc:
-            semantics = "safe_read" if self.path == "/queries/llm.list_models" else "mutation"
-            self._send(502, _failure_response(str(exc), request_semantics=semantics))
-
-    def log_message(self, *_: Any) -> None:
-        return
-
-
-def _server_address() -> tuple[str, int]:
-    host = str(os.environ.get("FS_EXTENSION_BIND_HOST") or "127.0.0.1").strip()
-    if not host:
-        raise RuntimeError("FS_EXTENSION_BIND_HOST must not be empty")
-    return host, int(os.environ.get("FS_EXTENSION_PORT", "8090"))
-
-
-if __name__ == "__main__":
-    if not Handler.token:
-        raise SystemExit("FS_EXTENSION_TOKEN is required for the OpenRouter remote runtime")
-    ThreadingHTTPServer(_server_address(), Handler).serve_forever()

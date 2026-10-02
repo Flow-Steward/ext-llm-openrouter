@@ -2,10 +2,10 @@ manifest_version: 2
 lifecycle: {data_schema_version: 1, data_migrations: []}
 extension_id: flowsteward.openrouter
 kind: tool_provider
-version: 1.0.0
+version: 1.1.0
 release_stage: active
 display_name: OpenRouter LLM Provider
-description: Remote HTTPS LLM provider runtime exposing OpenRouter-hosted models through the Flow Steward model catalog.
+description: Use OpenRouter-hosted models in Flow Steward agents with your OpenRouter API key.
 vendor:
   name: Flow Steward
   support_url: https://github.com/Flow-Steward/ext-llm-openrouter/issues
@@ -15,7 +15,7 @@ listing:
   tags:
     - llm
     - openrouter
-  summary: Reference remote HTTPS LLM provider runtime for OpenRouter model catalog integration.
+  summary: Connect OpenRouter with an API key, load its model list, and add models to the Flow Steward model catalog.
 features:
   - tool
   - llm_provider
@@ -29,37 +29,31 @@ account_scope:
   scope_type: account
   description: OpenRouter provider credentials are account-scoped.
 entrypoint:
-  mode: remote_https
-  remote:
-    base_url: ""
+  mode: subprocess
+  command:
+    - python3
+    - main.py
+  timeout_seconds: 120
 health:
   command:
     - python3
     - health.py
   timeout_seconds: 5
 ui_manifest: ui/ui_manifest.yaml
+python_requirements: []
 runtime:
   contract_version: extension_host_v1
   compatibility:
     platform_min: 1.0.0
-  remote:
-    base_url: ""
-    endpoints:
-      handshake: /handshake
-      health: /health
-      query: /queries/{query_id}
-      action: /actions/{action_id}
-      emit_event: /events
   extension_contract_v2:
     llm_provider:
       schema_version: llm_provider_extension_v1
       supplier_key: openrouter
       supplier_label: OpenRouter
-      runtime_mode: remote_https
+      runtime_mode: subprocess
       credential_provider_key: openrouter
       required_provider_secrets:
         - api_key
-        - runtime_bearer_token
       optional_provider_secrets: []
       operations:
         list_models:

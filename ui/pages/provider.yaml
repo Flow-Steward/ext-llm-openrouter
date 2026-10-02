@@ -1,4 +1,4 @@
 page_id: provider
 title: OpenRouter
-description: Remote OpenRouter LLM provider connection reference.
+description: Connect OpenRouter in the LLM provider panel on this page with your OpenRouter API key, then discover models and add the ones you want.
 components: []
