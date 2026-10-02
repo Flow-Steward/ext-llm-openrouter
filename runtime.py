@@ -442,6 +442,38 @@ def _portable_schema(value: Any) -> Any:
     return rewritten
 
 
+def _strict_schema(value: Any) -> Any:
+    """Make a JSON Schema acceptable to OpenAI-style strict structured output.
+
+    With ``strict: true`` the upstreams behind OpenRouter (OpenAI, Azure and
+    others) refuse with 400 any object whose ``required`` does not list every
+    property, or that does not set ``additionalProperties: false`` ("'required'
+    is required to be supplied and to be an array including every key in
+    properties"). Pydantic models leave fields with defaults out of
+    ``required``, so their schemas are rewritten here: every property becomes
+    required (the model then states defaults explicitly) and extra properties
+    are refused. The answer is still valid against the original schema, which
+    the host validates it against.
+    """
+    if isinstance(value, list):
+        return [_strict_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    rewritten: dict[str, Any] = {}
+    for key, item in value.items():
+        if key in _SCHEMA_LITERALS:
+            rewritten[key] = item
+        elif key in _SCHEMA_NAME_MAPS and isinstance(item, dict):
+            rewritten[key] = {name: _strict_schema(sub) for name, sub in item.items()}
+        else:
+            rewritten[key] = _strict_schema(item)
+    properties = rewritten.get("properties")
+    if isinstance(properties, dict):
+        rewritten["required"] = list(properties)
+        rewritten["additionalProperties"] = False
+    return rewritten
+
+
 def chat(request: dict[str, Any], *, structured: bool = False) -> dict[str, Any]:
     payload = dict(request.get("input") or {})
     base_url, headers = _connection(request)
@@ -472,12 +504,14 @@ def chat(request: dict[str, Any], *, structured: bool = False) -> dict[str, Any]
         schema = payload.get("schema")
         if not isinstance(schema, dict) or not schema:
             raise RuntimeError("capability_mismatch")
+        strict = bool(payload.get("strict", True))
+        upstream_schema = _portable_schema(schema)
         body["response_format"] = {
             "type": "json_schema",
             "json_schema": {
                 "name": payload.get("schema_name") or "Schema",
-                "strict": bool(payload.get("strict", True)),
-                "schema": _portable_schema(schema),
+                "strict": strict,
+                "schema": _strict_schema(upstream_schema) if strict else upstream_schema,
             },
         }
     response = _request_json(

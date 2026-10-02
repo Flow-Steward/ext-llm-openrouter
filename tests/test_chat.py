@@ -236,12 +236,55 @@ def test_structured_output_uses_a_strict_json_schema(runtime, openrouter) -> Non
     assert properties["const"] == {"type": "integer"}
 
 
+def test_strict_mode_gets_a_schema_strict_upstreams_accept(runtime, openrouter) -> None:
+    # A Pydantic model's schema leaves fields with defaults out of "required".
+    # OpenAI and Azure refuse that in strict mode with HTTP 400, which surfaced
+    # as upstream_error in the AI Builder's intent step.
+    pydantic_style = {
+        "$defs": {
+            "Item": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer"},
+                    "note": {"type": "string", "default": ""},
+                },
+                "required": ["id"],
+            }
+        },
+        "type": "object",
+        "properties": {
+            "goal": {"type": "string"},
+            "items": {"type": "array", "items": {"$ref": "#/$defs/Item"}, "default": []},
+            "extras": {
+                "type": "object",
+                "properties": {"x": {"type": "number"}},
+                "additionalProperties": True,
+            },
+        },
+        "required": ["goal"],
+    }
+    openrouter.completions = [completion({"content": "{}"})]
+
+    _chat(runtime, structured=True, schema=pydantic_style)
+
+    sent = openrouter.calls[0]["body"]["response_format"]["json_schema"]["schema"]
+    assert sent["required"] == ["goal", "items", "extras"]
+    assert sent["additionalProperties"] is False
+    assert sent["$defs"]["Item"]["required"] == ["id", "note"]
+    assert sent["$defs"]["Item"]["additionalProperties"] is False
+    assert sent["properties"]["extras"]["additionalProperties"] is False
+    # Defaults and other literals are carried over untouched.
+    assert sent["properties"]["items"]["default"] == []
+
+
 def test_strict_can_be_turned_off_by_the_host(runtime, openrouter) -> None:
     openrouter.completions = [completion({"content": "{}"})]
 
-    _chat(runtime, structured=True, schema=SCHEMA, strict=False)
+    _chat(runtime, structured=True, schema=SCHEMA | {"required": ["status"]}, strict=False)
 
-    assert openrouter.calls[0]["body"]["response_format"]["json_schema"]["strict"] is False
+    response_format = openrouter.calls[0]["body"]["response_format"]["json_schema"]
+    assert response_format["strict"] is False
+    assert response_format["schema"]["required"] == ["status"]  # sent as given
 
 
 @pytest.mark.parametrize("schema", [None, {}, "object"])
