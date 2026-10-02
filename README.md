@@ -9,6 +9,9 @@ them: you can pick them for an agent or make one a project's default model.
 - Kind: `tool_provider` with the `llm_provider` contract (`llm_provider_extension_v1`)
 - Runs as an ordinary Flow Steward extension subprocess. There is no separate
   service to deploy, no runtime URL and no runtime token.
+- Needs Flow Steward's extension host contract 1.1.0 or newer
+  (`runtime.compatibility.platform_min: 1.1.0`); an older host marks the bundle
+  incompatible.
 
 ## Setup
 
