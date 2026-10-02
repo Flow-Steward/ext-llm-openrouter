@@ -49,7 +49,8 @@ def test_models_carry_owner_grouping_and_capabilities(runtime, openrouter) -> No
     ("parameters", "capabilities"),
     [
         (["tools", "structured_outputs"], ["chat", "tools", "structured_output"]),
-        (["tools", "response_format"], ["chat", "tools", "structured_output"]),
+        # JSON mode alone is not strict structured output.
+        (["tools", "response_format"], ["chat", "tools"]),
         (["tools"], ["chat", "tools"]),
         ([], ["chat"]),
     ],

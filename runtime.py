@@ -383,7 +383,10 @@ def list_models(request: dict[str, Any]) -> dict[str, Any]:
         caps = ["chat"]
         if "tools" in params:
             caps.append("tools")
-        if "structured_outputs" in params or "response_format" in params:
+        # Only "structured_outputs" means strict JSON Schema answers;
+        # "response_format" alone is often just JSON mode, which cannot
+        # guarantee Flow Steward's structured format.
+        if "structured_outputs" in params:
             caps.append("structured_output")
         canonical_slug = str(item.get("canonical_slug") or "").strip()
         owner_key = canonical_slug.split("/", 1)[0]

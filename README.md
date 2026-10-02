@@ -39,7 +39,8 @@ them: you can pick them for an agent or make one a project's default model.
 
 - **Capabilities** come from `supported_parameters`: `chat` always, `tools` when
   it lists `tools`, and `structured_output` when it lists `structured_outputs`
-  or `response_format`. Flow Steward only enables models with all three.
+  (strict JSON Schema; `response_format` alone is often only JSON mode). Flow
+  Steward only enables models with all three.
   Anthropic models also report `prompt_caching`.
 - **Grouping**: `upstream_owner_key` is the first part of `canonical_slug`
   (`openai` in `openai/gpt-4o-mini`), and the label comes from the model's
@@ -61,9 +62,11 @@ place in Flow Steward (`REQUIRED_ROUTING_CAPABILITIES`) and checked live by
 verification.
 
 This extension reports a model's capabilities from OpenRouter's
-`supported_parameters`: `tools` for tool calling, and `structured_outputs` or
-`response_format` for structured output. Most of OpenRouter's catalog (about
-465 models when this was written) lacks one of them and is hidden by default.
+`supported_parameters`: `tools` for tool calling and `structured_outputs` for
+structured output. On 2 October 2026, 341 of OpenRouter's 465 models reported
+both; the other 124 are hidden by default. Reporting both does not mean a
+model passes: verification also checks that it really calls the tool and
+fills in the required values.
 
 Models the provider says lack a required capability are marked, for example
 "Not supported: no tool calling", and hidden by default; **Show all models**
