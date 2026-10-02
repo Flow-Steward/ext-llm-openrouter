@@ -53,6 +53,24 @@ a fingerprint of the catalog plus an offset. If the catalog changes between
 pages, discovery fails with `invalid_response` and Flow Steward keeps the
 previous catalog. Run **Discover models** again.
 
+## Which models can work
+
+Flow Steward routes work only to models that can chat, call tools and answer
+in its structured format. The list of required capabilities is kept in one
+place in Flow Steward (`REQUIRED_ROUTING_CAPABILITIES`) and checked live by
+verification.
+
+This extension reports a model's capabilities from OpenRouter's
+`supported_parameters`: `tools` for tool calling, and `structured_outputs` or
+`response_format` for structured output. Most of OpenRouter's catalog (about
+465 models when this was written) lacks one of them and is hidden by default.
+
+Models the provider says lack a required capability are marked, for example
+"Not supported: no tool calling", and hidden by default; **Show all models**
+lists them too. What the provider reports is only a first filter.
+Verification is the final authority: a hidden model can still be tried, and a
+listed model can still fail.
+
 ## How models are verified
 
 Flow Steward, not this extension, verifies a model before it can be enabled. It
