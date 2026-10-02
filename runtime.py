@@ -408,6 +408,40 @@ def list_models(request: dict[str, Any]) -> dict[str, Any]:
     return {"models": models, "next_cursor": next_cursor, "snapshot_complete": True}
 
 
+_SCHEMA_NAME_MAPS = frozenset({"properties", "patternProperties", "$defs", "definitions"})
+_SCHEMA_LITERALS = frozenset({"const", "enum", "default", "examples"})
+
+
+def _portable_schema(value: Any) -> Any:
+    """Rewrite ``const: x`` as the equivalent ``enum: [x]``, recursively.
+
+    Some upstreams behind OpenRouter (Gemini, for one) accept ``enum`` but
+    silently drop ``const`` from a structured-output schema, so the constraint
+    is never enforced. The two keywords mean the same thing in JSON Schema, and
+    the host still validates the answer against the schema it sent.
+    """
+    if isinstance(value, list):
+        return [_portable_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    # Beside an explicit ``enum``, ``const`` stays: dropping it would loosen
+    # the schema.
+    rewrite_const = "const" in value and "enum" not in value
+    rewritten: dict[str, Any] = {}
+    for key, item in value.items():
+        if key == "const" and rewrite_const:
+            rewritten["enum"] = [item]
+        elif key in _SCHEMA_LITERALS:
+            rewritten[key] = item  # JSON values, not schemas
+        elif key in _SCHEMA_NAME_MAPS and isinstance(item, dict):
+            # Keys here are property/definition names, not keywords: a
+            # property may itself be called "const".
+            rewritten[key] = {name: _portable_schema(sub) for name, sub in item.items()}
+        else:
+            rewritten[key] = _portable_schema(item)
+    return rewritten
+
+
 def chat(request: dict[str, Any], *, structured: bool = False) -> dict[str, Any]:
     payload = dict(request.get("input") or {})
     base_url, headers = _connection(request)
@@ -419,10 +453,15 @@ def chat(request: dict[str, Any], *, structured: bool = False) -> dict[str, Any]
             "max_tokens",
             "tools",
             "tool_choice",
-            "parallel_tool_calls",
         )
         if key in payload
     }
+    # ``parallel_tool_calls`` is not forwarded. Combined with
+    # ``provider.require_parameters`` below, OpenRouter refuses most routes with
+    # 404 "No endpoints found that can handle the requested parameters", even
+    # for models that call tools fine. The host's choice is enforced on the
+    # response instead: a request for at most one call fails if several return.
+    single_tool_call = payload.get("parallel_tool_calls") is False
     body["messages"] = _openai_messages(payload.get("messages"))
     body["model"] = body.pop("model_id")
     # Discovery metadata is advisory. Require OpenRouter to select a route
@@ -430,12 +469,15 @@ def chat(request: dict[str, Any], *, structured: bool = False) -> dict[str, Any]
     if structured or body.get("tools"):
         body["provider"] = {"require_parameters": True}
     if structured:
+        schema = payload.get("schema")
+        if not isinstance(schema, dict) or not schema:
+            raise RuntimeError("capability_mismatch")
         body["response_format"] = {
             "type": "json_schema",
             "json_schema": {
                 "name": payload.get("schema_name") or "Schema",
                 "strict": bool(payload.get("strict", True)),
-                "schema": payload.get("schema") or {},
+                "schema": _portable_schema(schema),
             },
         }
     response = _request_json(
@@ -453,6 +495,8 @@ def chat(request: dict[str, Any], *, structured: bool = False) -> dict[str, Any]
     ):
         raise RuntimeError("invalid_response")
     message = _canonical_message(choice["message"])
+    if single_tool_call and len(message.get("tool_calls") or []) > 1:
+        raise RuntimeError("capability_mismatch")
     usage = response.get("usage") or {}
     canonical_usage = {
         "input_tokens": usage.get("prompt_tokens", 0),

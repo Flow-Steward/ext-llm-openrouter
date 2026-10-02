@@ -1,19 +1,19 @@
 {
   "ok": true,
   "result": {
-    "structured_output": {
-      "intent": "build_workflow",
-      "confidence": 0.92
-    },
     "message": {
       "role": "assistant",
-      "content": "{\"intent\": \"build_workflow\", \"confidence\": 0.92}"
+      "content": "{\"status\":\"ok\",\"const\":7}"
     },
     "finish_reason": "stop",
     "usage": {
-      "input_tokens": 40,
-      "output_tokens": 18,
-      "total_tokens": 58
-    }
-  }
+      "input_tokens": 11,
+      "output_tokens": 5,
+      "total_tokens": 16,
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0
+    },
+    "structured_output": "{\"status\":\"ok\",\"const\":7}"
+  },
+  "errors": []
 }

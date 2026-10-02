@@ -1,79 +1,146 @@
-# OpenRouter LLM Provider — reference extension
+# OpenRouter LLM Provider for Flow Steward
 
-Status: active reference bundle. It includes a runnable stdlib remote runtime,
-canonical wire handlers, fixtures, and contract tests. Hosting the runtime is
-an operator responsibility and is intentionally outside this bundle.
+Use OpenRouter-hosted models (OpenAI, Google, Anthropic, Meta, DeepSeek and
+hundreds more) in Flow Steward agents with one OpenRouter API key. Models you
+add appear in Flow Steward's model catalog, grouped by the company that makes
+them: you can pick them for an agent or make one a project's default model.
 
-## Install boundary
+- Extension id: `flowsteward.openrouter`
+- Kind: `tool_provider` with the `llm_provider` contract (`llm_provider_extension_v1`)
+- Runs as an ordinary Flow Steward extension subprocess. There is no separate
+  service to deploy, no runtime URL and no runtime token.
 
-The manifest deliberately contains no default runtime URL. Installation requires
-an explicit public HTTPS `remote_base_url`; this is the URL of this extension
-runtime, not `openrouter.ai`. The OpenRouter upstream base URL is fixed by the
-runtime and the account-scoped `api_key` is passed through the existing
-encrypted `secret_refs` flow. Never place a private, LAN, localhost, or HTTP
-endpoint in either configuration.
+## Setup
 
-The bundled stdlib process is an origin server and binds to `127.0.0.1:8090`
-by default. Production hosting must place it behind a reverse proxy or load
-balancer that terminates TLS and exposes the configured public HTTPS
-`remote_base_url`. Set `FS_EXTENSION_BIND_HOST` only when the deployment network
-requires a different origin bind address; never publish the plain HTTP origin
-directly to the internet.
+1. Install the extension from the Marketplace (or **Install extension from
+   file** with the release ZIP).
+2. Open the extension page. The **LLM provider** panel asks for one field:
 
-For every credential-bearing OpenRouter request, the runtime resolves the fixed
-`openrouter.ai` hostname again, requires every DNS answer to be a public address,
-and pins that request's TCP connection to one validated address while retaining
-`openrouter.ai` for TLS certificate verification, SNI, and the HTTP `Host` header.
-Empty, private, reserved, link-local, loopback, multicast, unspecified, IPv6
-site-local, or mixed DNS results are rejected. Redirect responses are never
-followed, so the provider API key is sent only to the validated fixed upstream
-request target.
+   | Field | Required | Meaning |
+   | --- | --- | --- |
+   | **API key** (`api_key`) | yes | Your key from [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys) |
 
-A remote HTTPS LLM provider extension that exposes OpenRouter-hosted models to
-the Flow Steward model catalog through the `llm_provider` extension contract
-(`runtime.extension_contract_v2.llm_provider`, schema `llm_provider_extension_v1`).
+   The key is stored encrypted, scoped to your Flow Steward account, and only
+   reaches this extension when it calls OpenRouter. It is sent as
+   `Authorization: Bearer <key>` to the fixed upstream
+   `https://openrouter.ai/api/v1`. There is no base URL to configure, so the key
+   cannot be pointed anywhere else.
+3. Click **Discover models** to load the catalog.
+4. Tick the models you want. Flow Steward verifies each one (see below) and
+   enables it once it passes.
+5. Choose a verified model on an agent, or set it as a project's default model.
 
-## Contract
+## How models are listed
 
-- **supplier_key / supplier_label**: `openrouter` / `OpenRouter`
-- **runtime_mode**: `remote_https` (the only mode supported in v1)
-- **credentials**: configured through the existing platform provider-secret flow
-  (`POST /api/llm-provider-extensions/{install_id}/credentials`, account-scoped,
-  stored in `secret_refs`). `required_provider_secrets`:
-  `["api_key", "runtime_bearer_token"]`. The reference runtime must be started
-  with the matching `FS_EXTENSION_TOKEN`; `runtime_bearer_token` is sent only as
-  the host-to-runtime Authorization header and is never forwarded upstream.
-- **operations**:
-  - `llm.list_models` (query) — discover models, paginated via `cursor`/`limit`.
-  - `llm.chat` (action) — chat completion.
-  - `llm.chat_structured` (action) — structured output for
-    `with_structured_output(schema, ...)`.
-- **action idempotency**: `llm.chat` and `llm.chat_structured` require the host
-  `idempotency_key`. The single-process reference runtime coalesces concurrent
-  calls and retains the completed result or safe error for five minutes in a
-  bounded in-memory cache, so a transport retry cannot repeat an accepted
-  upstream generation while that runtime process remains alive.
-- **model_grouping**: `upstream_owner` — models are grouped into provider groups
-  by their `upstream_owner_key` / `upstream_owner_label`.
+`llm.list_models` reads `GET /models`. For each model:
 
-## Grouping & naming
+- **Capabilities** come from `supported_parameters`: `chat` always, `tools` when
+  it lists `tools`, and `structured_output` when it lists `structured_outputs`
+  or `response_format`. Flow Steward only enables models with all three.
+  Anthropic models also report `prompt_caching`.
+- **Grouping**: `upstream_owner_key` is the first part of `canonical_slug`
+  (`openai` in `openai/gpt-4o-mini`), and the label comes from the model's
+  display name ("OpenAI: GPT-4o-mini" gives "OpenAI"). The catalog shows
+  "OpenAI (OpenRouter)", "Google (OpenRouter)", and so on.
+- **Revision**: `canonical_slug`. When OpenRouter repoints an alias id, Flow
+  Steward marks that model's verification stale.
 
-Aggregator models are grouped by upstream owner and labelled
-`"<owner> (<supplier>)"`, composed from descriptor metadata (never hardcoded):
+Pages hold 200 models. Every page is a separate subprocess, so the cursor holds
+a fingerprint of the catalog plus an offset. If the catalog changes between
+pages, discovery fails with `invalid_response` and Flow Steward keeps the
+previous catalog. Run **Discover models** again.
 
-| `model_id` (preserved exactly) | Provider group label    |
-| ------------------------------ | ----------------------- |
-| `deepseek/deepseek-chat`       | `DeepSeek (OpenRouter)` |
-| `z-ai/glm-4.5`                 | `Z.AI / GLM (OpenRouter)` |
-| `meta-llama/llama-3.3-70b-instruct` | `Meta Llama (OpenRouter)` |
+## How models are verified
 
-`model_id` is sent to the remote runtime verbatim — e.g. `deepseek/deepseek-chat`.
-Models without `structured_output` support (e.g. the Llama entry above) are
-stored on discovery but cannot be enabled for global routing in v1.
+Flow Steward, not this extension, verifies a model before it can be enabled. It
+runs a fixed probe: a plain chat, a forced tool call, a tool-result replay, and
+two structured-output answers checked against a JSON Schema with exact
+(`const`) values. A model that fails any step stays disabled and shows the
+reason. A verification lasts 30 days.
 
-## Fixtures
+## OpenRouter behaviour this extension accounts for
 
-`fixtures/` contains canonical `llm.list_models`, `llm.chat`, and
-`llm.chat_structured` responses. They are exercised by
-`tests/unit/test_llm_provider_extensions.py` to prove exact model-ID
-preservation and grouping, and the remote-runtime round-trip.
+- **Routing to endpoints that support the request.** Requests with tools or a
+  structured-output schema set `provider.require_parameters: true`, so
+  OpenRouter only routes to endpoints that accept those parameters instead of
+  silently ignoring them.
+- **`parallel_tool_calls` is not forwarded.** Combined with
+  `require_parameters`, it makes OpenRouter answer `404` ("No endpoints found
+  that can handle the requested parameters"), even for models that call tools
+  well, such as `openai/gpt-4o-mini`. When the host asks for one call at a time,
+  the response is checked instead: two or more calls fail with
+  `capability_mismatch`.
+- **Structured output** uses `response_format: {type: json_schema, json_schema:
+  {name, strict, schema}}`, with `strict: true` unless the host turns it off.
+- **Some upstreams drop `const`.** Gemini behind OpenRouter keeps `enum` but
+  ignores `const`, so `const: x` is rewritten as the equivalent `enum: [x]`. A
+  `const` beside an explicit `enum` is left alone so the schema is never
+  loosened. Flow Steward still validates the answer against the original
+  schema.
+- **Reasoning state** (`reasoning_details`, `reasoning`, `reasoning_content`) is
+  returned to the host and replayed verbatim on the next turn, as OpenRouter
+  requires for tool use with reasoning models.
+- **Cost**: OpenRouter's reported `usage.cost` is passed on as `cost_usd` when
+  it is a finite, non-negative number.
+
+## Network safety
+
+The upstream is fixed. Every request still re-resolves `openrouter.ai`, refuses
+the call if any DNS answer is non-public (loopback, private, link-local, CGNAT,
+multicast, reserved), and pins the connection to the checked address, while TLS
+verifies the hostname. Redirects are never followed, so the key cannot be
+forwarded elsewhere. Upstream bodies are capped at 5 MiB, and an error status is
+classified before its body is read.
+
+## Errors
+
+Every failure leaves the extension as one of these categories, never as
+upstream text: `authentication_error` (401/403, or no key), `billing_quota_exceeded`
+(402), `model_unavailable` (404, including "no endpoint accepts these
+parameters"), `rate_limited` (429), `timeout`, `capability_mismatch`,
+`invalid_response`, `upstream_error`. Model discovery can be retried safely. A
+failed chat is not retried automatically, because it may already have run and
+been billed upstream.
+
+## Files
+
+| File | Purpose |
+| --- | --- |
+| `extension.yaml` | Manifest: subprocess entrypoint and the `llm_provider` contract |
+| `main.py` | Subprocess entrypoint: reads the host request on stdin and dispatches `llm.list_models`, `llm.chat`, `llm.chat_structured` |
+| `runtime.py` | OpenRouter HTTP client and the three operations |
+| `health.py` | Health command run by the host |
+| `fixtures/` | Canonical results of each operation; the tests compare against them |
+| `ui/` | Extension page shown in Flow Steward |
+
+### Host contract in one paragraph
+
+The host runs `python3 main.py` with one JSON request on stdin.
+`mode` is `query` or `action`, the operation is in `query.query_id` /
+`action.action_id`, and its arguments are in `query.params` / `action.input`. The
+API key arrives as a runtime resource,
+`runtime_context.resources.provider_secrets.api_key`. The extension prints
+`{"ok": true, "result": …}` and exits 0. On failure it prints
+`{"ok": false, "error_code", "error", "errors": [{"code", "message"}]}` and exits
+2, which the host treats as a provider error rather than a crash.
+
+## Development
+
+```bash
+python -m venv .venv && . .venv/bin/activate
+pip install pytest==8.3.5 PyYAML==6.0.3 dev-wheels/flowsteward_extension_sdk-*.whl
+python -m pytest -q                                    # every handler, with mocked HTTP
+python .github/scripts/package_extension.py            # dist/flowsteward.openrouter-<version>.zip
+python .github/scripts/catalog_check.py dist/*.zip     # what the catalog would say
+```
+
+These are the same steps CI runs. No test touches the network. Each test
+replaces `runtime._request_json`, or the socket layer for the transport tests.
+To validate the bundle with Flow Steward itself:
+
+```bash
+flow-steward extensions validate flowsteward.openrouter --root <directory containing this bundle>
+```
+
+Releases: bump `version` in `extension.yaml`, then push a matching tag
+(`v1.1.0`). The release workflow publishes the archive CI built.

@@ -3,13 +3,17 @@
   "result": {
     "message": {
       "role": "assistant",
-      "content": "Hello from deepseek/deepseek-chat via OpenRouter."
+      "content": "basic-ok"
     },
     "finish_reason": "stop",
     "usage": {
-      "input_tokens": 12,
-      "output_tokens": 9,
-      "total_tokens": 21
+      "input_tokens": 11,
+      "output_tokens": 5,
+      "total_tokens": 16,
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "cost_usd": 3.1e-06
     }
-  }
+  },
+  "errors": []
 }
