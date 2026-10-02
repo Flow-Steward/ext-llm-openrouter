@@ -72,6 +72,13 @@ reason. A verification lasts 30 days.
   `capability_mismatch`.
 - **Structured output** uses `response_format: {type: json_schema, json_schema:
   {name, strict, schema}}`, with `strict: true` unless the host turns it off.
+- **Strict mode needs every property in `required`.** OpenAI and Azure refuse
+  (400) a strict schema whose objects leave some properties out of `required`
+  or allow extra properties, which is how Pydantic describes fields with
+  defaults. In strict mode every object lists all of its properties as
+  required and sets `additionalProperties: false`. The model then states
+  defaults explicitly, and its answer is still valid against the host's
+  original schema.
 - **Some upstreams drop `const`.** Gemini behind OpenRouter keeps `enum` but
   ignores `const`, so `const: x` is rewritten as the equivalent `enum: [x]`. A
   `const` beside an explicit `enum` is left alone so the schema is never
