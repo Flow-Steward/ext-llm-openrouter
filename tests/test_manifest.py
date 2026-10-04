@@ -93,8 +93,17 @@ def test_version_is_semver() -> None:
     assert re.fullmatch(r"\d+\.\d+\.\d+", MANIFEST["version"])
 
 
-def test_it_requires_a_host_that_runs_llm_providers_in_process() -> None:
-    # Extension host contract 1.1.0 is the first that runs an llm_provider as a
-    # subprocess and accepts optional_connection_config; an older host marks the
+def test_it_requires_a_host_that_shows_setting_help() -> None:
+    # Extension host contract 1.1.0 runs an llm_provider as a subprocess; 1.3.0
+    # shows provider_secret_help under the field. An older host marks the
     # bundle incompatible ("below required minimum") instead of misreading it.
-    assert MANIFEST["runtime"]["compatibility"]["platform_min"] == "1.1.0"
+    assert MANIFEST["runtime"]["compatibility"]["platform_min"] == "1.3.0"
+
+
+def test_key_help_names_only_declared_secrets_and_fits_the_host_limit() -> None:
+    help_text = CONTRACT["provider_secret_help"]
+    declared = set(CONTRACT["required_provider_secrets"]) | set(
+        CONTRACT["optional_provider_secrets"]
+    )
+    assert set(help_text) == {"api_key"} <= declared
+    assert all(isinstance(t, str) and 0 < len(t) <= 300 for t in help_text.values())

@@ -33,15 +33,21 @@ def main():
 
 
 class FakeOpenRouter:
-    """Answers ``GET /models`` and ``POST /chat/completions`` from canned data."""
+    """Answers ``GET /key``, ``GET /models`` and ``POST /chat/completions`` from canned data."""
 
     def __init__(self) -> None:
         self.models: list[dict[str, Any]] = []
         self.completions: list[Any] = []
         self.calls: list[dict[str, Any]] = []
+        # The key check: an accepted key by default; set an exception to refuse it.
+        self.key: Any = {"data": {"label": "test"}}
 
     def __call__(self, url: str, *, method: str, headers: dict, body: Any = None):
         self.calls.append({"url": url, "method": method, "headers": dict(headers), "body": body})
+        if url.endswith("/key"):
+            if isinstance(self.key, Exception):
+                raise self.key
+            return self.key
         if url.endswith("/models"):
             return {"data": list(self.models)}
         if url.endswith("/chat/completions"):

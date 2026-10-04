@@ -363,9 +363,26 @@ def _owner_label(item: dict[str, Any], owner_key: str) -> str:
     return " ".join(part.upper() if part == "ai" else part.title() for part in owner_key.split("-"))
 
 
+def _check_api_key(base_url: str, headers: dict[str, str]) -> None:
+    """Refuse a key OpenRouter rejects before listing models.
+
+    ``GET /models`` is public, so the catalog loads with a wrong or partly
+    copied key and every model then fails verification. ``GET /key`` runs no
+    model and answers 401 for a rejected key.
+    """
+    _request_json(f"{base_url}/key", method="GET", headers=headers)
+
+
 def list_models(request: dict[str, Any]) -> dict[str, Any]:
     base_url, headers = _connection(request)
     expected_fingerprint, offset, limit = _pagination(request)
+    if not expected_fingerprint:
+        # Once per discovery: later pages carry the first page's fingerprint.
+        try:
+            _check_api_key(base_url, headers)
+        except RuntimeError as exc:
+            if str(exc) == "authentication_error":
+                raise
     data = _request_json(f"{base_url}/models", method="GET", headers=headers).get("data", [])
     if not isinstance(data, list):
         raise RuntimeError("invalid_response")

@@ -9,9 +9,10 @@ them: you can pick them for an agent or make one a project's default model.
 - Kind: `tool_provider` with the `llm_provider` contract (`llm_provider_extension_v1`)
 - Runs as an ordinary Flow Steward extension subprocess. There is no separate
   service to deploy, no runtime URL and no runtime token.
-- Needs Flow Steward's extension host contract 1.1.0 or newer
-  (`runtime.compatibility.platform_min: 1.1.0`); an older host marks the bundle
-  incompatible.
+- Needs Flow Steward's extension host contract 1.3.0 or newer
+  (`runtime.compatibility.platform_min: 1.3.0`); an older host marks the bundle
+  incompatible. 1.3.0 shows the help text under the API key field
+  (`provider_secret_help`).
 
 ## Setup
 
@@ -21,14 +22,20 @@ them: you can pick them for an agent or make one a project's default model.
 
    | Field | Required | Meaning |
    | --- | --- | --- |
-   | **API key** (`api_key`) | yes | Your key from [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys) |
+   | **API key** (`api_key`) | yes | Your key from [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys). It starts with `sk-or-v1-`; copy it whole with the copy button. |
 
    The key is stored encrypted, scoped to your Flow Steward account, and only
    reaches this extension when it calls OpenRouter. It is sent as
    `Authorization: Bearer <key>` to the fixed upstream
    `https://openrouter.ai/api/v1`. There is no base URL to configure, so the key
    cannot be pointed anywhere else.
-3. Click **Discover models** to load the catalog.
+3. Click **Discover models** to load the catalog. Discovery first checks the
+   key with `GET /key`, which runs no model: a rejected key (wrong, revoked,
+   or partly copied) stops discovery with "The provider rejected the API key"
+   instead of loading the public catalog and failing every model later.
+   Use the search box to find a model by name, for example `gpt-4o-mini` or
+   `claude`. Models that can't meet Flow Steward's requirements are hidden
+   until you choose **Show all models**.
 4. Tick the models you want. Flow Steward verifies each one (see below) and
    enables it once it passes.
 5. Choose a verified model on an agent, or set it as a project's default model.

@@ -40,9 +40,10 @@ def test_models_carry_owner_grouping_and_capabilities(runtime, openrouter) -> No
     result = _list(runtime)
 
     assert result == json.loads((FIXTURES / "llm.list_models.json").read_text())["result"]
-    (call,) = openrouter.calls
+    key_check, call = openrouter.calls
+    assert key_check["url"] == "https://openrouter.ai/api/v1/key"
     assert call["url"] == "https://openrouter.ai/api/v1/models"
-    assert call["headers"]["Authorization"] == "Bearer key-1"
+    assert all(c["headers"]["Authorization"] == "Bearer key-1" for c in openrouter.calls)
 
 
 @pytest.mark.parametrize(
@@ -120,7 +121,8 @@ def test_pages_are_stateless_and_bound_to_one_catalog(runtime, openrouter) -> No
         f"owner/model-{i}" for i in range(200, 205)
     ]
     assert second["next_cursor"] == ""
-    assert len(openrouter.calls) == 2  # every page re-reads the catalog
+    # Every page re-reads the catalog; the key is checked once, on the first page.
+    assert [c["url"].rsplit("/", 1)[1] for c in openrouter.calls] == ["key", "models", "models"]
 
 
 def test_a_catalog_that_changes_between_pages_is_refused(runtime, openrouter) -> None:
@@ -155,3 +157,24 @@ def test_a_catalog_without_a_model_list_is_invalid(monkeypatch, runtime) -> None
 
     with pytest.raises(RuntimeError, match="invalid_response"):
         _list(runtime)
+
+
+def test_a_key_openrouter_rejects_fails_discovery_instead_of_every_model(
+    runtime, openrouter
+) -> None:
+    # GET /models is public: without this check the catalog loads with a wrong
+    # key and every model then fails verification with "authentication failed".
+    openrouter.models = _catalog(3)
+    openrouter.key = RuntimeError("authentication_error")
+    with pytest.raises(RuntimeError, match="^authentication_error$"):
+        _list(runtime, api_key="sk-or-v1-partly-copied")
+    assert [c["url"].rsplit("/", 1)[1] for c in openrouter.calls] == ["key"]
+
+
+@pytest.mark.parametrize("no_verdict", ["upstream_error", "timeout", "rate_limited"])
+def test_a_key_check_without_a_verdict_does_not_block_discovery(
+    runtime, openrouter, no_verdict: str
+) -> None:
+    openrouter.models = _catalog(1)
+    openrouter.key = RuntimeError(no_verdict)
+    assert len(_list(runtime)["models"]) == 1

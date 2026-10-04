@@ -2,7 +2,7 @@ manifest_version: 2
 lifecycle: {data_schema_version: 1, data_migrations: []}
 extension_id: flowsteward.openrouter
 kind: tool_provider
-version: 1.1.0
+version: 1.1.1
 release_stage: active
 display_name: OpenRouter LLM Provider
 description: Use OpenRouter-hosted models in Flow Steward agents with your OpenRouter API key.
@@ -44,7 +44,7 @@ python_requirements: []
 runtime:
   contract_version: extension_host_v1
   compatibility:
-    platform_min: 1.1.0
+    platform_min: 1.3.0
   extension_contract_v2:
     llm_provider:
       schema_version: llm_provider_extension_v1
@@ -55,6 +55,9 @@ runtime:
       required_provider_secrets:
         - api_key
       optional_provider_secrets: []
+      # Shown under the field in Flow Steward's provider settings (contract 1.3.0).
+      provider_secret_help:
+        api_key: "Create a key at openrouter.ai/settings/keys and copy it whole with the copy button. It starts with sk-or-v1-. Models outside your credits or limits are refused at verification."
       operations:
         list_models:
           query_id: llm.list_models
