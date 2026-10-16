@@ -8,6 +8,7 @@ DNS), so the URL checks, status mapping and body bounds under test are real.
 from __future__ import annotations
 
 import socket
+from typing import Any
 
 import pytest
 
@@ -156,7 +157,7 @@ def test_http_status_category_precedes_stalled_error_body(runtime, monkeypatch) 
 
 
 def test_request_json_preserves_the_urlopen_test_seam(runtime, monkeypatch) -> None:
-    captured = {}
+    captured: dict[str, Any] = {}
 
     class _Response:
         def __enter__(self):
@@ -344,7 +345,7 @@ def test_openrouter_reresolves_dns_for_every_request_and_rejects_rebinding(
 def test_openrouter_pins_tcp_while_preserving_tls_hostname_and_host_header(
     runtime, monkeypatch
 ) -> None:
-    captured = {}
+    captured: dict[str, Any] = {}
     monkeypatch.setattr(
         runtime,
         "_public_https_url",

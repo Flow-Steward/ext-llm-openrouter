@@ -15,27 +15,52 @@ from pathlib import Path
 
 import pytest
 
+from .conftest import completion
+
 ROOT = Path(__file__).resolve().parents[1]
 RESOURCES = {
     "provider_secrets": {"api_key": "key-1"},
     "connection_config": {},
 }
+# The final extension_host_v2 execution scope: all four keys, at most one owner.
+ROOT_STEP_SCOPE = {
+    "group_id": None,
+    "for_each_id": None,
+    "step_id": "ask_model",
+    "step_execution_id": "5e0a9b8c-7d6e-4f50-8a1b-2c3d4e5f0001",
+}
+GROUP_STEP_SCOPE = {**ROOT_STEP_SCOPE, "group_id": "draft_answers"}
+FOR_EACH_STEP_SCOPE = {
+    **ROOT_STEP_SCOPE,
+    "for_each_id": "each_ticket",
+    "step_execution_id": "5e0a9b8c-7d6e-4f50-8a1b-2c3d4e5f0002",
+}
+# Provider settings and model discovery run outside any workflow: all four null.
+WORKFLOW_SCOPE = dict.fromkeys(ROOT_STEP_SCOPE)
 
 
-def _query(query_id: str, params: dict | None = None) -> dict:
+def _envelope(body: dict, scope: dict | None = None) -> dict:
     return {
-        "mode": "query",
-        "query": {"query_id": query_id, "params": params or {}},
-        "runtime_context": {"account_id": "acc-1", "resources": RESOURCES},
+        "contract_version": "extension_host_v2",
+        **body,
+        "runtime_context": {
+            "account_id": "acc-1",
+            "resources": RESOURCES,
+            **(WORKFLOW_SCOPE if scope is None else scope),
+        },
     }
 
 
-def _action(action_id: str, payload: dict | None = None) -> dict:
-    return {
-        "mode": "action",
-        "action": {"action_id": action_id, "input": payload or {}},
-        "runtime_context": {"account_id": "acc-1", "resources": RESOURCES},
-    }
+def _query(query_id: str, params: dict | None = None, scope: dict | None = None) -> dict:
+    return _envelope(
+        {"mode": "query", "query": {"query_id": query_id, "params": params or {}}}, scope
+    )
+
+
+def _action(action_id: str, payload: dict | None = None, scope: dict | None = None) -> dict:
+    return _envelope(
+        {"mode": "action", "action": {"action_id": action_id, "input": payload or {}}}, scope
+    )
 
 
 def _assert_structured_error(response: dict, code: str) -> None:
@@ -97,8 +122,8 @@ def test_chat_actions_route_to_chat(main, recorded, action_id, structured) -> No
     [
         _query("llm.unknown"),
         _action("llm.unknown"),
-        {"mode": "event"},
-        {},
+        _envelope({"mode": "event"}),
+        _envelope({}),
     ],
 )
 def test_an_unknown_operation_is_a_structured_error(main, recorded, payload) -> None:
@@ -155,12 +180,20 @@ def _run(stdin: str) -> subprocess.CompletedProcess:
     )
 
 
-@pytest.mark.parametrize("stdin", ["not json", "[]", ""])
-def test_the_process_answers_bad_input_with_a_structured_error(stdin) -> None:
+@pytest.mark.parametrize(
+    ("stdin", "code"),
+    [
+        ("not json", "invalid_response"),
+        ("[]", "invalid_response"),
+        # An empty request is an object without the host contract.
+        ("", "invalid_host_envelope"),
+    ],
+)
+def test_the_process_answers_bad_input_with_a_structured_error(stdin, code) -> None:
     result = _run(stdin)
 
     assert result.returncode == 2
-    _assert_structured_error(json.loads(result.stdout), "invalid_response")
+    _assert_structured_error(json.loads(result.stdout), code)
 
 
 def test_the_process_writes_exactly_one_json_object() -> None:
@@ -169,3 +202,79 @@ def test_the_process_writes_exactly_one_json_object() -> None:
     assert result.returncode == 2
     assert result.stdout.count("\n") == 1
     assert json.loads(result.stdout)["ok"] is False
+
+
+@pytest.mark.parametrize(
+    "scope", [ROOT_STEP_SCOPE, GROUP_STEP_SCOPE, FOR_EACH_STEP_SCOPE, WORKFLOW_SCOPE]
+)
+def test_every_final_scope_owner_lists_models_and_chats(main, openrouter, scope) -> None:
+    openrouter.models = [{"id": "openai/gpt-4o-mini", "canonical_slug": "openai/gpt-4o-mini"}]
+    openrouter.completions = [completion({"content": "scoped-ok"})]
+
+    listed, list_code = main.handle(_query("llm.list_models", {"limit": 200}, scope))
+    chatted, chat_code = main.handle(
+        _action(
+            "llm.chat",
+            {
+                "model_id": "openai/gpt-4o-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+            scope,
+        )
+    )
+
+    assert (list_code, chat_code) == (0, 0)
+    assert [model["model_id"] for model in listed["result"]["models"]] == ["openai/gpt-4o-mini"]
+    assert chatted["ok"] is True
+    assert [call["url"] for call in openrouter.calls] == [
+        "https://openrouter.ai/api/v1/key",
+        "https://openrouter.ai/api/v1/models",
+        "https://openrouter.ai/api/v1/chat/completions",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("contract_version", "scope", "reason"),
+    [
+        ("extension_host_v1", FOR_EACH_STEP_SCOPE, "Unsupported host contract"),
+        ("", FOR_EACH_STEP_SCOPE, "Unsupported host contract"),
+        (
+            "extension_host_v2",
+            {k: v for k, v in FOR_EACH_STEP_SCOPE.items() if k != "for_each_id"},
+            "misses execution scope",
+        ),
+        (
+            "extension_host_v2",
+            {**FOR_EACH_STEP_SCOPE, "group_id": "draft_answers"},
+            "both a Group and a For each",
+        ),
+        (
+            "extension_host_v2",
+            {**ROOT_STEP_SCOPE, "step_execution_id": None},
+            "without its logical execution",
+        ),
+    ],
+)
+@pytest.mark.parametrize("mode", ["query", "action"])
+def test_foreign_or_incomplete_envelope_is_refused_before_any_request(
+    main, openrouter, mode, contract_version, scope, reason
+) -> None:
+    openrouter.completions = [completion({"content": "must not be asked"})]
+    if mode == "query":
+        payload = _query("llm.list_models", {"limit": 200})
+    else:
+        payload = _action("llm.chat", {"model_id": "openai/gpt-4o-mini", "messages": []})
+    payload["contract_version"] = contract_version
+    context = payload["runtime_context"]
+    for key in ROOT_STEP_SCOPE:
+        context.pop(key)
+    context.update(scope)
+
+    response, exit_code = main.handle(payload)
+
+    assert exit_code == 2
+    _assert_structured_error(response, "invalid_host_envelope")
+    assert reason in response["error"]
+    assert response["definitely_no_external_effect"] is True
+    assert response["retryable"] is False
+    assert openrouter.calls == []

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.0
+
+- Speaks the final extension host contract `extension_host_v2`
+  (`runtime.contract_version`) and is built on `flowsteward-extension-sdk` 0.4.0.
+  A request of another contract, with a missing execution-scope key
+  (`group_id`, `for_each_id`, `step_id`, `step_execution_id`), with both a Group
+  and a For each as its owner, or with a step but no step execution, is refused
+  with `invalid_host_envelope` before OpenRouter is called. An older Flow Steward
+  does not run this release.
+- Works the same for a step at the root, in a Group or in a For each, and for
+  calls outside a workflow (provider settings, model discovery).
+
 ## 1.1.1
 
 - Checks the API key before listing models: **Discover models** stops with

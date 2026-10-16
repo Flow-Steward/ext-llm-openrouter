@@ -29,6 +29,7 @@ SAFE_ERROR_CODES = frozenset(
         "authentication_error",
         "billing_quota_exceeded",
         "capability_mismatch",
+        "invalid_host_envelope",
         "invalid_response",
         "model_unavailable",
         "rate_limited",
@@ -125,10 +126,8 @@ def urlopen(request: Request, *, timeout: int) -> _PinnedHTTPSResponse:
     )
     # HTTPSConnection keeps ``hostname`` for TLS SNI/certificate validation.
     # Override only its TCP dial target with the public address just validated.
-    connection._create_connection = lambda _address, dial_timeout, source_address=None: (
-        socket.create_connection(  # type: ignore[attr-defined]
-            (pinned_ip, port), dial_timeout, source_address
-        )
+    connection._create_connection = lambda _address, dial_timeout, source_address=None: (  # type: ignore[attr-defined]
+        socket.create_connection((pinned_ip, port), dial_timeout, source_address)
     )
     host_header = f"[{hostname}]" if ":" in hostname else hostname
     if port != 443:
@@ -149,7 +148,7 @@ def urlopen(request: Request, *, timeout: int) -> _PinnedHTTPSResponse:
                 request.full_url,
                 response.status,
                 "upstream rejected",
-                getattr(response, "headers", {}),
+                getattr(response, "headers", {}),  # type: ignore[arg-type]
                 None,
             )
         return _PinnedHTTPSResponse(connection, response)
@@ -290,7 +289,8 @@ def _openai_messages(messages: Any) -> list[dict[str, Any]]:
                 if key in continuation:
                     item[key] = continuation[key]
         calls: list[dict[str, Any]] = []
-        for call in raw.get("tool_calls") if isinstance(raw.get("tool_calls"), list) else []:
+        raw_calls = raw.get("tool_calls")
+        for call in raw_calls if isinstance(raw_calls, list) else []:
             if not isinstance(call, dict):
                 continue
             call_id, name = str(call.get("id") or "").strip(), str(call.get("name") or "").strip()
@@ -324,10 +324,12 @@ def _canonical_message(value: Any) -> dict[str, Any]:
     if continuation:
         message["continuation"] = continuation
     calls: list[dict[str, Any]] = []
-    for call in message.get("tool_calls") if isinstance(message.get("tool_calls"), list) else []:
+    raw_calls = message.get("tool_calls")
+    for call in raw_calls if isinstance(raw_calls, list) else []:
         if not isinstance(call, dict):
             continue
-        function = call.get("function") if isinstance(call.get("function"), dict) else {}
+        raw_function = call.get("function")
+        function = raw_function if isinstance(raw_function, dict) else {}
         arguments = function.get("arguments")
         if isinstance(arguments, str):
             with suppress(json.JSONDecodeError):
