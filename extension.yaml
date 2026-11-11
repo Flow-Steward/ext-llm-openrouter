@@ -2,10 +2,15 @@ manifest_version: 2
 lifecycle: {data_schema_version: 1, data_migrations: []}
 extension_id: flowsteward.openrouter
 kind: tool_provider
-version: 1.2.2
+version: 1.2.3
 release_stage: active
 display_name: OpenRouter LLM Provider
-description: Use OpenRouter-hosted models in Flow Steward agents with your OpenRouter API key.
+description: |-
+  Choose models from multiple publishers for your Flow Steward agents using OpenRouter LLM Provider. Discover the provider's catalog, search for models and add those that pass Flow Steward's capability verification. Selected models appear in the model catalog grouped by their upstream publisher, and can be assigned to agents or used as a project's default model.
+
+  The integration supports conversations, function calls with tool-result replay, and JSON Schema-guided structured responses through OpenRouter's chat-completion API. It preserves supported reasoning continuation data across tool turns and passes through token usage and a reported cost when supplied by OpenRouter. Requests involving tools or structured output ask OpenRouter to route to endpoints supporting those parameters.
+
+  Use it to choose between multiple model publishers while managing provider access through one OpenRouter account. Discovery lists catalog metadata rather than guaranteeing that every model is usable: enabled models must support chat, tool calling and structured output and pass the host's verification. Your credits, limits, model access and upstream endpoint availability still apply. The extension uses the fixed OpenRouter service and requires no separate inference server deployment.
 vendor:
   name: Flow Steward
   support_url: https://github.com/Flow-Steward/ext-llm-openrouter/issues
@@ -13,9 +18,13 @@ vendor:
 listing:
   category: ai
   tags:
-    - llm
-    - openrouter
-  summary: Connect OpenRouter with an API key, load its model list, and add models to the Flow Steward model catalog.
+  - llm
+  - openrouter
+  summary: Connect OpenRouter models to Flow Steward agents with one API key, model discovery, tool use and structured
+    responses.
+  setup_summary: Enter a complete OpenRouter API key in the account-scoped LLM provider panel, then discover models
+    and select the ones to verify and enable. Ensure the account has the credits and permissions needed for those
+    models.
 features:
   - tool
   - llm_provider

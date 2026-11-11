@@ -1,9 +1,10 @@
 # OpenRouter LLM Provider for Flow Steward
 
-Use OpenRouter-hosted models (OpenAI, Google, Anthropic, Meta, DeepSeek and
-hundreds more) in Flow Steward agents with one OpenRouter API key. Models you
-add appear in Flow Steward's model catalog, grouped by the company that makes
-them: you can pick them for an agent or make one a project's default model.
+Choose models from multiple publishers for your Flow Steward agents using OpenRouter LLM Provider. Discover the provider's catalog, search for models and add those that pass Flow Steward's capability verification. Selected models appear in the model catalog grouped by their upstream publisher, and can be assigned to agents or used as a project's default model.
+
+The integration supports conversations, function calls with tool-result replay, and JSON Schema-guided structured responses through OpenRouter's chat-completion API. It preserves supported reasoning continuation data across tool turns and passes through token usage and a reported cost when supplied by OpenRouter. Requests involving tools or structured output ask OpenRouter to route to endpoints supporting those parameters.
+
+Use it to choose between multiple model publishers while managing provider access through one OpenRouter account. Discovery lists catalog metadata rather than guaranteeing that every model is usable: enabled models must support chat, tool calling and structured output and pass the host's verification. Your credits, limits, model access and upstream endpoint availability still apply. The extension uses the fixed OpenRouter service and requires no separate inference server deployment.
 
 - Extension id: `flowsteward.openrouter`
 - Kind: `tool_provider` with the `llm_provider` contract (`llm_provider_extension_v1`)
